@@ -6,6 +6,9 @@ import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
+import { machineHistory, machineById, machineHasHistory, lastMachineFor, machinesFor } from '../lib/machines.js'
+import { voiceSupported, listenOnce } from '../lib/voice.js'
+import { parseVoice, voiceSummary } from '../lib/voice-parse.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
 import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, cascadeWeight, insertWarmupRow, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
@@ -22,7 +25,7 @@ import WorkoutThumb, { hasWorkoutMedia } from '../components/WorkoutThumb.jsx'
 import { workoutSettingsSheet } from '../components/WorkoutSettingsSheet.jsx'
 import { durationSheet } from '../components/DurationWheel.jsx'
 import { REST_MAX, fmtRest } from '../lib/duration.js'
-import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet } from '../sheets.jsx'
+import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, machineSheet, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet } from '../sheets.jsx'
 import { afterScrollRestore, scrollRestorePending } from '../components/Modals.jsx'
 import { effortColor } from '../lib/effort.js'
 import Elapsed from '../components/Elapsed.jsx'
@@ -97,7 +100,7 @@ const RTL_LETTER = /[֐-ࣿיִ-﷿ﹰ-﻿]/
 // enough to turn over, far shorter than the rest the set earns once both sides are held.
 const SWITCH_SIDES_SEC = 10
 
-function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSide, onField, onAddSet, onRemoveSet, onAddWarmup, onRemoveSetAt, onCopySetAt, onStartTimed, onPairPrev, onPairNext, onSetRowRef, onProgressionSettings, onRest, onNoProg, routineUpdate, onSwap, onMoveUp, onMoveDown, canMoveUp, canMoveDown, onRemoveExercise, busy }) {
+function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSide, onField, onAddSet, onRemoveSet, onAddWarmup, onRemoveSetAt, onCopySetAt, onStartTimed, onPairPrev, onPairNext, onSetRowRef, onProgressionSettings, onRest, onNoProg, routineUpdate, onSwap, onMachine, onVoice, onMoveUp, onMoveDown, canMoveUp, canMoveDown, onRemoveExercise, busy }) {
   const S = useStore(s => s.S)
   const update = useStore(s => s.update)
   const working = useUI(s => s.work)
@@ -174,7 +177,10 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   const timed = mode === 'time'
   // The history the rows were built from: before the session's day when it is logged into the
   // past (sessionHistory), so "last time", the best set and the Best chip are not from later on.
-  const H = sessionHistory(S)
+  // On one of your machines, that machine's own history (lib/machines.js): 60 kg on one station
+  // is not 60 kg on the next, so "last time" and Best are read from where you are standing.
+  const H = machineHistory(sessionHistory(S), entry.id, entry.mid)
+  const machine = machineById(S, entry.mid)
   // The routine's own last session of this exercise (or any, for a routine that has none), the
   // same one the rows and the progression line were built from (#216).
   const last = lastEntryFor(H, entry.id, entry.rid)
@@ -603,9 +609,19 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       <div className="row" style={{ gap: 2, flex: 'none' }}>
         {entry.note && <button className="iconbtn" aria-label={t('Note')} title={t('Note')} style={{ color: 'var(--acc)' }}
           onClick={() => exerciseNoteSheet(entryIdx)}><Icon name="note" /></button>}
+        {onVoice && <button className="iconbtn voicebtn" aria-label={t('Log a set by voice')} title={t('Log a set by voice')} onClick={onVoice}><Icon name="mic" /></button>}
         <button className="iconbtn" aria-label={t('More')} title={t('More')} onClick={openMore}><Icon name="more" /></button>
       </div>
     </div>
+    {/* The machine it is done on: one tap to pick another, in every view, since it decides the
+        numbers below. Cardio shows it only once a machine is picked (a treadmill of yours). */}
+    {onMachine && (machine || !cardio) && <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+      <button type="button" className={'chip mach' + (machine ? ' on' : '')} onClick={onMachine}
+        aria-label={machine ? t('Machine: {0}. Change', machine.name) : t('Pick a machine')}>
+        <Icon name="machine" />{machine ? machine.name : t('Machine')}
+      </button>
+      {machine && !machineHasHistory(sessionHistory(S), entry.id, machine.id) && <span className="small dim">{t('First time here: weights from your other sessions')}</span>}
+    </div>}
     {/* Kept out of progression: by hand for this session (the ⋯ menu, with its undo right here),
         or by a deload or rehab routine, which owns that choice and offers no undo. On in every
         view, compact included: it changes what the next session is built from. */}
@@ -1088,6 +1104,53 @@ function ActiveWorkout() {
     }
   })
   const modeAt = idx => modeOf({ ...(A.entries[idx].target || {}), id: A.entries[idx].id })
+
+  // Voice logging (lib/voice.js, lib/voice-parse.js): say the set, and the next open row of this
+  // exercise takes the numbers and is ticked, exactly as a tap would (rest timer included). The
+  // first use asks, because the browser's recognizer sends the audio to Google or Apple.
+  const voiceLog = idx => {
+    const listen = () => useUI.getState().openSheet(close => <VoiceSheet close={close} onHeard={alts => applyVoice(idx, alts)} />)
+    if (S.voiceOk) { listen(); return }
+    confirmSheet({
+      title: t('Log sets by voice?'),
+      message: t('Say what you lifted, like “60 kilo 10” or “nochmal”. Your browser turns speech into text and may send the audio to Google or Apple for that.'),
+      confirmText: t('Turn on'),
+      onConfirm: () => { update(s => { s.voiceOk = true }); listen() },
+    })
+  }
+  const applyVoice = (idx, alternatives) => {
+    const toast = m => useUI.getState().toast(m)
+    const st = useStore.getState().S
+    const e = st.active?.entries?.[idx]
+    if (!e) return
+    const m = modeAt(idx)
+    if (m === 'cardio') { toast(t('Voice logging works for sets and holds, not for cardio yet.')); return }
+    let i = e.sets.findIndex(x => !x.done)
+    const row = i >= 0 ? e.sets[i] : e.sets[e.sets.length - 1]
+    const ctx = { mode: m, expect: { w: row?.w, r: row?.r, sec: row?.sec }, machines: machinesFor(st, e.id) }
+    let p = null
+    for (const a of alternatives) { p = parseVoice(a, ctx); if (p) break }
+    if (!p) { toast(t('Didn’t catch that: “{0}”', alternatives[0] || '')); return }
+    if (p.machineId && p.machineId !== e.mid) mutEntry(idx, x => { x.mid = p.machineId })
+    if (i < 0) { addSet(idx); i = useStore.getState().S.active.entries[idx].sets.length - 1 }
+    if (isSideSet(useStore.getState().S.active.entries[idx].sets[i])) { toast(t('Left and right sets can’t be logged by voice yet.')); return }
+    // "nochmal" / "same again": the set you just did, not whatever the row was prefilled with.
+    if (p.action === 'repeat') {
+      const prev = useStore.getState().S.active.entries[idx].sets.slice(0, i).filter(x => x.done && !isWarmupRow(x)).at(-1)
+      if (prev) p = { ...p, ...(prev.w != null ? { w: prev.w } : {}), ...(prev.r != null ? { r: prev.r } : {}), ...(prev.sec != null ? { sec: prev.sec } : {}) }
+    }
+    if (p.w != null) setField(idx, i, 'w', p.w)
+    if (p.r != null) setField(idx, i, 'r', p.r)
+    if (p.sec != null) setField(idx, i, 'sec', p.sec)
+    if (p.rir != null) {
+      const kind = effortOf(st)
+      if (kind === 'rir') setField(idx, i, 'rir', capEffort('rir', p.rir))
+      else if (kind === 'rpe') setField(idx, i, 'rpe', capEffort('rpe', 10 - p.rir))
+    }
+    toggle(idx, i)
+    const logged = useStore.getState().S.active?.entries?.[idx]?.sets?.[i]
+    if (logged) toast(t('Set {0} logged: {1}', i + 1, voiceSummary({ w: logged.w > 0 ? logged.w : null, r: m === 'time' ? null : logged.r, sec: m === 'time' ? logged.sec : null, rir: p.rir }, S.unit)))
+  }
   const addSet = idx => mutEntry(idx, e => {
     const l = e.sets[e.sets.length - 1]
     const m = modeOf({ ...(e.target || {}), id: e.id })
@@ -1209,6 +1272,8 @@ function ActiveWorkout() {
   const blockProps = idx => ({
     editing,
     onSwap: () => swapActiveWorkoutExercise(idx),
+    onMachine: editing ? null : () => machineSheet(idx),
+    onVoice: editing || !voiceSupported() ? null : () => voiceLog(idx),
     onMoveUp: () => moveUnitAt(idx, -1),
     onMoveDown: () => moveUnitAt(idx, 1),
     canMoveUp: canMoveActiveWorkoutUnit(A, idx, -1),
@@ -1306,13 +1371,15 @@ function ActiveWorkout() {
       // source, target); freestyle reproduces what you did last time.
       // Read from before the session's day when it is logged into the past (sessionHistory).
       const past = sessionHistory(s)
+      // The machine you did it on last time comes back, as at the session start (lib/machines.js).
+      const mid = lastMachineFor(s, ex.id, curRid)
       const built = freestyle
-        ? { target: { ...cfg }, plan: null, sets: applyIntensifierPlan(buildSets(past, full, {
+        ? { target: { ...cfg }, plan: null, sets: applyIntensifierPlan(buildSets(machineHistory(past, ex.id, mid), full, {
           step: modeOf(full) === 'reps' ? weightIncrement(full, s.unit) : defaultIncrement(ex.id, s.unit), preferLast: true,
         }), full, dropGrid(s, full)) }
-        : buildPlannedEntry(past, full, routine, { noProg })
+        : buildPlannedEntry(past, full, routine, { noProg, mid })
       const insertAt = insertionIndexAfterCurrentUnit(supersetUnits(s.active.entries), s.active.cur, s.active.entries.length)
-      s.active.entries.splice(insertAt, 0, joinSessionNoProg(s.active, { id: ex.id, ...built, ...(curRid ? { rid: curRid } : {}), ...(noProg ? { noProg: true } : {}) }))
+      s.active.entries.splice(insertAt, 0, joinSessionNoProg(s.active, { id: ex.id, ...built, ...(curRid ? { rid: curRid } : {}), ...(noProg ? { noProg: true } : {}), ...(mid ? { mid } : {}) }))
       s.active.cur = insertAt
       useUI.getState().shiftRestOwner(insertAt, 1)
     })
@@ -1421,7 +1488,7 @@ function ActiveWorkout() {
         // kept in place (done warm-ups first, then done work sets, then the fresh remainder).
         // Without a prescription only in a routine kept out of progression: an exercise kept out
         // by hand keeps its prescription, so its Undo leaves the numbers it should count at.
-        const built = buildPlannedEntry(sessionHistory(s), full, activeRoutine, { noProg: builtOutOfProgression(activeEntry, activeRoutine) })
+        const built = buildPlannedEntry(sessionHistory(s), full, activeRoutine, { noProg: builtOutOfProgression(activeEntry, activeRoutine), mid: activeEntry.mid || null })
         const fresh = built.sets
         const doneWarm = activeEntry.sets.filter(x => x.done && isWarmupRow(x))
         const doneWork = activeEntry.sets.filter(x => x.done && !isWarmupRow(x))
@@ -1872,6 +1939,32 @@ function ActiveWorkout() {
       </button>
     })()}
     <div className="workout-end-spacer" />
+  </div>
+}
+
+// The listening sheet: one phrase, then it closes and the set is logged (applyVoice).
+function VoiceSheet({ close, onHeard }) {
+  const [attempt, setAttempt] = useState(0)
+  const [partial, setPartial] = useState('')
+  const [err, setErr] = useState(null)
+  useEffect(() => {
+    setPartial(''); setErr(null)
+    return listenOnce({
+      onPartial: setPartial,
+      onResult: alts => { close(); onHeard(alts) },
+      onError: code => setErr(code),
+    })
+  }, [attempt])
+  const blocked = err === 'not-allowed' || err === 'service-not-allowed'
+  return <div className="voicesheet">
+    <div className={'voice-mic' + (err ? '' : ' live')}><Icon name="mic" /></div>
+    <h3>{err ? (blocked ? t('No microphone access') : t('Didn’t hear anything')) : t('Listening…')}</h3>
+    <div className="muted small" style={{ minHeight: 36 }}>
+      {partial ? `“${partial}”` : blocked ? t('Allow the microphone for this site in your browser settings.') : t('Say for example “60 kilo 10”, “10 at 62.5” or “nochmal”.')}
+    </div>
+    {err && !blocked
+      ? <Button variant="primary" icon="mic" onClick={() => setAttempt(a => a + 1)}>{t('Try again')}</Button>
+      : <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>}
   </div>
 }
 

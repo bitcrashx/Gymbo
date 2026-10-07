@@ -1297,6 +1297,9 @@ body.chips-dragging *{cursor:inherit}
 .setextra .chip.add{display:inline-flex;align-items:center;gap:4px;color:var(--acc)}
 .setextra .chip.add svg{width:13px;height:13px}
 .setextra .chip.add:disabled{opacity:.35}
+.chip.mach{display:inline-flex;align-items:center;gap:5px;text-transform:none}
+.chip.mach svg{width:14px;height:14px}
+.chip.mach:not(.on){color:var(--acc)}
 /* why the next target is what it is (issue #17) */
 .progline{
   width:100%;display:flex;align-items:flex-start;gap:7px;margin:6px 0 2px;padding:0;
@@ -2034,3 +2037,13 @@ body.no-tabbar.resting #toast{bottom:calc(100px + var(--sab))}
 [dir="rtl"] .hm-wrap,[dir="rtl"] .cal-grid{direction:ltr}
 /* Tight tracking is tuned for Latin; Arabic is a connected script and gets none. */
 [dir="rtl"] *{letter-spacing:0}
+/* Voice logging (Workout.jsx VoiceSheet): one big mic that pulses while it listens. */
+.voicesheet{text-align:center;padding:6px 0 2px}
+.voicesheet h3{margin:12px 0 4px}
+.voicesheet .btn{margin-top:12px}
+.voice-mic{width:76px;height:76px;margin:6px auto 0;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);color:var(--label)}
+.voice-mic svg{width:34px;height:34px}
+.voice-mic.live{background:var(--acc);color:var(--on-acc);animation:voicepulse 1.4s ease-in-out infinite}
+@keyframes voicepulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--acc) 45%,transparent)}50%{box-shadow:0 0 0 14px color-mix(in srgb,var(--acc) 0%,transparent)}}
+@media (prefers-reduced-motion:reduce){.voice-mic.live{animation:none}}
+.iconbtn.voicebtn{color:var(--acc)}

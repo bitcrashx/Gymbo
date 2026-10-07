@@ -1,3 +1,24 @@
+# Kraftbuch
+
+A gym log that stays out of your way: one tap or one sentence per set, on whichever machine is free.
+
+Kraftbuch is a fork of [openGym](https://github.com/DuarteSantos8/openGym) by Duarte Santos, licensed
+under the AGPL v3 like the original. Everything openGym does still works; this fork adds:
+
+- **My machines.** Name the machines in your gym ("Gym80 by the window") and tie each to an exercise.
+  A workout remembers which machine you used, and weights, "last time" and progression are read
+  per machine, because 60 kg on one lat pulldown is not 60 kg on the next. Switching machines changes
+  today's workout only; your plan stays as it is. Stats and muscle volume still count the movement.
+- **Voice logging.** Tap the mic on an exercise and say the set: "60 Kilo 10", "zehn mit 62,5",
+  "10 at 60, RIR 2" or "nochmal". The next open set is filled in and ticked, and the rest timer
+  starts. German and English, number words included. It uses the browser's speech recognition
+  (Chrome, Safari), which sends the audio to Google or Apple; the app asks before the first use.
+  Not available in the Android app's WebView yet.
+
+The original openGym README follows.
+
+---
+
 <div align="center">
 
 <img src="assets/banner.png" alt="openGym" width="720">

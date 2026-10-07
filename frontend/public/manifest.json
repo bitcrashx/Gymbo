@@ -1,6 +1,6 @@
 {
-  "name": "openGym",
-  "short_name": "openGym",
+  "name": "Kraftbuch",
+  "short_name": "Kraftbuch",
   "description": "Personal gym & body weight tracker",
   "start_url": "./",
   "scope": "./",

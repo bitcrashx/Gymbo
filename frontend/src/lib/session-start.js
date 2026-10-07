@@ -7,6 +7,7 @@ import { buildSets, applyIntensifierPlan, modeOf } from './history.js'
 import { isWarmupRow } from './workout-model.js'
 import { nextPrescription, applyPrescription, defaultIncrement, weightIncrement, plannedOf } from './progression.js'
 import { dropGrid } from './plates.js'
+import { machineHistory, lastMachineFor } from './machines.js'
 
 /**
  * Where a planned session's reps come from (Settings → During a workout). 'plan', the default:
@@ -25,15 +26,18 @@ export const startsFromLast = st => st?.startFrom === 'last'
  * the exercise is planned in: its own history comes first (#216) and its policy applies.
  * `noProg` builds the routine's own numbers with no prescription, as an excluded routine does.
  */
-export function buildPlannedEntry(st, cfg, routine, { noProg = false } = {}) {
+export function buildPlannedEntry(st, cfg, routine, { noProg = false, mid = null } = {}) {
+  // On a machine of your own the numbers come from that machine's history (lib/machines.js);
+  // the rest of the profile (unit, plates, settings) is the same either way.
+  const hist = mid ? machineHistory(st, cfg.id, mid) : st
   // `plan` is kept on the entry purely so the workout can explain the number it chose.
-  const plan = noProg ? { policy: 'off', kind: 'off' } : nextPrescription(st, cfg, routine)
+  const plan = noProg ? { policy: 'off', kind: 'off' } : nextPrescription(hist, cfg, routine)
   // The warm-up ramp and the prescription snap to the exercise's own increment (1.25 kg
   // plates exist), not the unit default; a timed exercise's `inc` is seconds, so it keeps the
   // default for its optional load.
   const step = modeOf(cfg) === 'reps' ? weightIncrement(cfg, st.unit) : defaultIncrement(cfg.id, st.unit)
   const planReps = !startsFromLast(st)
-  const rows = applyPrescription(buildSets(st, cfg, { step, rid: routine?.id, useTarget: plan.kind === 'off', planReps }), plan, step)
+  const rows = applyPrescription(buildSets(hist, cfg, { step, rid: routine?.id, useTarget: plan.kind === 'off', planReps }), plan, step)
   const sets = applyIntensifierPlan(rows, cfg, dropGrid(st, cfg))
   const target = { ...cfg }
   if (plan.weight != null) target.weight = plan.weight
@@ -96,7 +100,9 @@ export function buildSessionEntries(st, r) {
   // right weight already on the screen instead of being told about it afterwards.
   const noProg = r?.excludeFromProgression === true
   return (r ? r.ex : []).map(cfg => {
-    const built = buildPlannedEntry(st, cfg, r, { noProg })
-    return { id: cfg.id, sg: cfg.sg, ...built, ...(noProg ? { noProg: true } : {}) }
+    // The machine you did it on last time comes back on its own; the plan never names one.
+    const mid = lastMachineFor(st, cfg.id, r?.id)
+    const built = buildPlannedEntry(st, cfg, r, { noProg, mid })
+    return { id: cfg.id, sg: cfg.sg, ...built, ...(noProg ? { noProg: true } : {}), ...(mid ? { mid } : {}) }
   })
 }

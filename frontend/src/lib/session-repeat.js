@@ -43,7 +43,8 @@ export function repeatSessionEntries(st, w, { exists = id => !!EXIDX[id] } = {})
     const only = { ...st, workouts: [{ ...w, entries: [source] }] }
     const sets = applyIntensifierPlan(buildSets(only, cfg, { step, preferLast: true }), cfg, dropGrid(st, cfg))
       .map(row => ({ ...row, done: false }))
-    entries.push({ id: cfg.id, ...(sg ? { sg } : {}), target: { ...cfg }, plan: null, sets })
+    // Done on one of your machines that day: the same machine again (lib/machines.js).
+    entries.push({ id: cfg.id, ...(sg ? { sg } : {}), ...(source?.mid ? { mid: source.mid } : {}), target: { ...cfg }, plan: null, sets })
   })
   return { entries: regroup(entries), skipped }
 }

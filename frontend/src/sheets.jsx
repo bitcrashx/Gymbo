@@ -38,6 +38,7 @@ import { isPyramid, normalizePyramid, normalizePyramidRest, pyramidFromFlat, fla
 import { MOBILE, shareExport, printHtml } from './lib/mobile.js'
 import { speedUnitOf, toSpeed, fromSpeed } from './lib/speed.js'
 import { buildCompletedWorkout, sessionEnd } from './lib/finish-workout.js'
+import { machineHistory, lastMachineFor, machinesFor, otherMachinesFor, newMachine, MACHINE_NAME_MAX } from './lib/machines.js'
 import { refillAfter } from './lib/rotation.js'
 import { isWarmupRow, hasCompletedWork } from './lib/workout-model.js'
 import { saveSessionAsRoutine } from './lib/session-routines.js'
@@ -1279,70 +1280,205 @@ export function swapActiveWorkoutExercise(index) {
     // The picker is a chooser here, not a stack you keep adding from: one swap, then back to
     // the workout. (The add flow deliberately leaves it open.)
     picker.close()
-    const full = { ...cfg, id: ex.id }
-    const st = S()
-    const current = st.active?.entries?.[index]
-    if (!current) return
-    // A swap is an in-place substitution — routine identity is unchanged, so the replacement
-    // keeps the slot's own `rid` and reads its prescription from that routine (not a
-    // session-wide one). A slot with no `rid` is freestyle.
-    const slotRoutine = current.rid ? st.routines.find(r => r.id === current.rid) : null
-    const freestyle = !slotRoutine
-    // Same rows the add flow builds: last time's loads and, in a planned session, the
-    // prescription — swapping barbell for dumbbell bench must not start you at an empty bar.
-    // Built from what came before the session's day when it is logged into the past (sessionHistory).
-    const step = modeOf(full) === 'reps' ? weightIncrement(full, st.unit) : defaultIncrement(ex.id, st.unit)
-    const past = sessionHistory(st)
-    const built = freestyle
-      ? { target: { ...cfg }, plan: null, sets: applyIntensifierPlan(buildSets(past, full, { step, preferLast: true }), full, dropGrid(st, full)) }
-      : buildPlannedEntry(past, full, slotRoutine, { noProg: builtOutOfProgression(current, slotRoutine) })
-    const replacement = {
-      id: ex.id,
-      ...built,
-      ...(current.rid ? { rid: current.rid } : {}),
-      // A slot kept out of progression stays out once swapped. Replaced in place the entry keeps
-      // it anyway; inserted beside logged sets, the replacement would otherwise count as a
-      // regular session of the new exercise. Only a deload or rehab slot is built without a
-      // prescription (above): one kept out by hand keeps the marker and its Undo on the card,
-      // and an Undo must leave numbers that are right to count.
-      ...(current.noProg === true ? { noProg: true } : {}),
-    }
-
-    const apply = options => {
-      // A timed callback closes over entry/set indexes. Invalidate it, and the current rest,
-      // before the selected occurrence can be replaced or a new entry shifts those indexes.
-      ui().stopWork()
-      ui().stopRest()
-      update(state => { swapActiveExercise(state.active, index, replacement, options) }, true)
-    }
-    const logged = (current.sets || []).some(set => set.done === true)
-    if (!logged) { apply(); return }
-
-    if (current.sg) {
-      ui().openSheet(close => <>
-        <h3>{t('Swap exercise?')}</h3>
-        <div className="muted small" style={{ marginBottom: 12 }}>
-          {t('Logged sets stay with the original exercise. Choose where the replacement belongs.')}
-        </div>
-        <Button variant="primary" onClick={() => { close(); apply({ loggedConfirmed: true, groupDisposition: 'keep' }) }}>
-          {t('Keep replacement in this group')}
-        </Button>
-        <div style={{ height: 8 }} />
-        <Button variant="ghost" onClick={() => { close(); apply({ loggedConfirmed: true, groupDisposition: 'detach' }) }}>
-          {t('Insert after this group')}
-        </Button>
-      </>)
-      return
-    }
-
-    confirmSheet({
-      title: t('Swap exercise?'),
-      message: t('Logged sets stay with the original exercise. The replacement will be inserted afterward.'),
-      confirmText: t('Continue'),
-      onConfirm: () => apply({ loggedConfirmed: true })
-    })
+    swapActiveEntryTo(index, ex, cfg)
   }
 }
+
+/**
+ * Put `ex` (built with `cfg`) in place of one active-workout entry. `mid` is the machine it is done
+ * on; left out, the one last used for that exercise comes back (lib/machines.js). The machine sheet
+ * swaps through here too, to a machine of another exercise.
+ */
+export function swapActiveEntryTo(index, ex, cfg, { mid } = {}) {
+  const full = { ...cfg, id: ex.id }
+  const st = S()
+  const current = st.active?.entries?.[index]
+  if (!current) return
+  const machine = mid !== undefined ? mid : lastMachineFor(st, ex.id, current.rid)
+  // A swap is an in-place substitution — routine identity is unchanged, so the replacement
+  // keeps the slot's own `rid` and reads its prescription from that routine (not a
+  // session-wide one). A slot with no `rid` is freestyle.
+  const slotRoutine = current.rid ? st.routines.find(r => r.id === current.rid) : null
+  const freestyle = !slotRoutine
+  // Same rows the add flow builds: last time's loads and, in a planned session, the
+  // prescription — swapping barbell for dumbbell bench must not start you at an empty bar.
+  // Built from what came before the session's day when it is logged into the past (sessionHistory).
+  const step = modeOf(full) === 'reps' ? weightIncrement(full, st.unit) : defaultIncrement(ex.id, st.unit)
+  const past = sessionHistory(st)
+  const built = freestyle
+    ? { target: { ...cfg }, plan: null, sets: applyIntensifierPlan(buildSets(machine ? machineHistory(past, ex.id, machine) : past, full, { step, preferLast: true }), full, dropGrid(st, full)) }
+    : buildPlannedEntry(past, full, slotRoutine, { noProg: builtOutOfProgression(current, slotRoutine), mid: machine })
+  const replacement = {
+    id: ex.id,
+    ...built,
+    ...(machine ? { mid: machine } : {}),
+    ...(current.rid ? { rid: current.rid } : {}),
+    // A slot kept out of progression stays out once swapped. Replaced in place the entry keeps
+    // it anyway; inserted beside logged sets, the replacement would otherwise count as a
+    // regular session of the new exercise. Only a deload or rehab slot is built without a
+    // prescription (above): one kept out by hand keeps the marker and its Undo on the card,
+    // and an Undo must leave numbers that are right to count.
+    ...(current.noProg === true ? { noProg: true } : {}),
+  }
+
+  const apply = options => {
+    // A timed callback closes over entry/set indexes. Invalidate it, and the current rest,
+    // before the selected occurrence can be replaced or a new entry shifts those indexes.
+    ui().stopWork()
+    ui().stopRest()
+    update(state => { swapActiveExercise(state.active, index, replacement, options) }, true)
+  }
+  const logged = (current.sets || []).some(set => set.done === true)
+  if (!logged) { apply(); return }
+
+  if (current.sg) {
+    ui().openSheet(close => <>
+      <h3>{t('Swap exercise?')}</h3>
+      <div className="muted small" style={{ marginBottom: 12 }}>
+        {t('Logged sets stay with the original exercise. Choose where the replacement belongs.')}
+      </div>
+      <Button variant="primary" onClick={() => { close(); apply({ loggedConfirmed: true, groupDisposition: 'keep' }) }}>
+        {t('Keep replacement in this group')}
+      </Button>
+      <div style={{ height: 8 }} />
+      <Button variant="ghost" onClick={() => { close(); apply({ loggedConfirmed: true, groupDisposition: 'detach' }) }}>
+        {t('Insert after this group')}
+      </Button>
+    </>)
+    return
+  }
+
+  confirmSheet({
+    title: t('Swap exercise?'),
+    message: t('Logged sets stay with the original exercise. The replacement will be inserted afterward.'),
+    confirmText: t('Continue'),
+    onConfirm: () => apply({ loggedConfirmed: true })
+  })
+}
+
+/* ============================ my machines ============================ */
+// Which of your gym's machines today's exercise is done on (lib/machines.js). Picking one changes
+// this session only: the numbers come from that machine's own history, the plan stays as it is,
+// and the next session starts on whichever machine you used last.
+function MachineSheet({ entryIdx, close }) {
+  const nameRef = useRef(null)
+  const onNameFocus = useSheetKeyboard(nameRef)
+  const st = useStore(s => s.S)
+  const update = useStore(s => s.update)
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState('')
+  const entry = st.active?.entries?.[entryIdx]
+  useEffect(() => { if (!entry) close() }, [!entry])
+  if (!entry) return null
+  const ex = exOr(entry.id)
+  const mine = machinesFor(st, entry.id)
+  const others = otherMachinesFor(st, entry.id, exOr)
+  const logged = (entry.sets || []).some(x => x.done)
+  const lastUsed = mid => {
+    const ws = st.workouts || []
+    for (let i = ws.length - 1; i >= 0; i--) if ((ws[i].entries || []).some(e => e && e.id === entry.id && e.mid === mid && (e.sets || []).some(x => x.done))) return ws[i].d
+    return null
+  }
+
+  // The same exercise on another machine. Nothing logged yet: the rows are rebuilt from that
+  // machine's history, the way a swap builds them. Sets already logged stay and move with it.
+  const choose = mid => {
+    close()
+    if ((entry.mid || null) === (mid || null)) return
+    if (logged) {
+      update(s => {
+        const e = s.active?.entries?.[entryIdx]
+        if (!e) return
+        if (mid) e.mid = mid
+        else delete e.mid
+      })
+      return
+    }
+    const routine = entry.rid ? st.routines.find(r => r.id === entry.rid) : null
+    const cfg = (routine && routine.ex.find(c => c.id === entry.id)) || entry.target || defaultConfig(entry.id)
+    swapActiveEntryTo(entryIdx, ex, cfg, { mid: mid || null })
+  }
+  // A machine of another exercise for the same muscle: a swap, sets and reps kept where they fit.
+  const swapTo = m => {
+    close()
+    const next = exOr(m.exId)
+    const base = defaultConfig(next.id)
+    const cur = entry.target || {}
+    const cfg = modeOf({ ...base, id: next.id }) === 'reps' && modeOf({ ...cur, id: entry.id }) === 'reps'
+      ? { ...base, ...(cur.sets ? { sets: cur.sets } : {}), ...(cur.reps ? { reps: cur.reps } : {}) }
+      : base
+    swapActiveEntryTo(entryIdx, next, cfg, { mid: m.id })
+  }
+  const add = () => {
+    const m = newMachine(name, entry.id)
+    if (!m) { nameRef.current?.focus(); return }
+    update(s => { s.machines = [...(s.machines || []), m] })
+    setName('')
+    choose(m.id)
+  }
+  const rename = (id, value) => {
+    const n = String(value || '').trim().slice(0, MACHINE_NAME_MAX)
+    if (!n) return
+    update(s => { const m = (s.machines || []).find(x => x.id === id); if (m && m.name !== n) m.name = n })
+  }
+  const remove = m => confirmSheet({
+    title: t('Delete “{0}”?', m.name),
+    message: t('Your logged sets stay. They just no longer show which machine they were on.'),
+    confirmText: t('Delete'), danger: true,
+    onConfirm: () => update(s => {
+      s.machines = (s.machines || []).filter(x => x.id !== m.id)
+      if (s.active) for (const e of s.active.entries || []) if (e.mid === m.id) delete e.mid
+    }),
+  })
+
+  const row = (key, label, sub, on, onClick) => <div key={key} className="item menu-item" {...tappable(onClick)}>
+    <span className="lrow-i"><Icon name="machine" /></span>
+    <div className="grow"><div className="tt">{label}</div>{sub && <div className="ss">{sub}</div>}</div>
+    {on != null && <span className={'menu-on' + (on ? ' is-on' : '')}><Icon name="check" /></span>}
+  </div>
+
+  return <>
+    <div className="row between" style={{ marginBottom: 2 }}>
+      <h3 style={{ margin: 0 }}>{t('Machine')}</h3>
+      {mine.length > 0 && <Button size="sm" variant="ghost" onClick={() => setEditing(v => !v)}>{editing ? t('Done') : t('Edit')}</Button>}
+    </div>
+    <div className="muted small" style={{ marginBottom: 10 }}>
+      {exerciseNameText(ex)} · {t('Changes today’s workout only. Your plan stays as it is.')}
+    </div>
+    {editing
+      ? <div className="list menu-list" style={{ marginBottom: 12 }}>
+        {mine.map(m => <div key={m.id} className="item menu-item">
+          <TextField defaultValue={m.name} maxLength={MACHINE_NAME_MAX} aria-label={t('Machine name')}
+            onBlur={e => rename(m.id, e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }} />
+          <button className="iconbtn" aria-label={t('Delete')} title={t('Delete')} onClick={() => remove(m)}><Icon name="trash" /></button>
+        </div>)}
+      </div>
+      : <div className="list menu-list" style={{ marginBottom: 12 }}>
+        {mine.map(m => {
+          const d = lastUsed(m.id)
+          return row(m.id, m.name, d ? t('Last used {0}', fmtDate(d, true)) : t('Nothing logged here yet'), entry.mid === m.id, () => choose(m.id))
+        })}
+        {row('none', t('No specific machine'), mine.length ? t('Uses all your history of this exercise') : null, !entry.mid, () => choose(null))}
+      </div>}
+    {!editing && <>
+      <div className="menu-sec">{t('Add a machine')}</div>
+      <TextField ref={nameRef} value={name} maxLength={MACHINE_NAME_MAX} onFocus={onNameFocus}
+        placeholder={t('e.g. Gym80 by the window')} aria-label={t('Machine name')}
+        onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add() }} />
+      <div style={{ height: 8 }} />
+      <Button variant="primary" onClick={add} disabled={!name.trim()}>{t('Add machine')}</Button>
+      <div style={{ height: 6 }} />
+      {logged && <div className="muted small" style={{ marginBottom: 12 }}>{t('Sets you already logged move to the machine you pick.')}</div>}
+      {others.length > 0 && <>
+        <div className="menu-sec" style={{ marginTop: 12 }}>{t('Your other machines for this muscle')}</div>
+        <div className="list menu-list">
+          {others.map(m => row(m.id, m.name, exerciseNameText(exOr(m.exId)), null, () => swapTo(m)))}
+        </div>
+      </>}
+    </>}
+  </>
+}
+export const machineSheet = entryIdx => ui().openSheet(close => <MachineSheet entryIdx={entryIdx} close={close} />)
 
 /* ============================ equipment profiles ============================ */
 // Create or edit one profile ("Home", "Gym", ...): a name plus a checklist of what you have.
@@ -1936,7 +2072,7 @@ function PlanTools({ close }) {
     <h3>{t('Share your plan')}</h3>
     <div className="muted small" style={{ marginBottom: 16 }}>{t('Send your routines to a friend, or put your week on paper.')}</div>
     <Button variant="primary" icon="share" onClick={exportFile} disabled={!hasRoutines}>{t('Export plan file')}</Button>
-    <div className="dim small" style={{ margin: '7px 2px 0', lineHeight: 1.4 }}>{t('A small file a friend can import into their own openGym. Routines only, none of your workouts or weigh-ins.')}</div>
+    <div className="dim small" style={{ margin: '7px 2px 0', lineHeight: 1.4 }}>{t('A small file a friend can import into their own Kraftbuch. Routines only, none of your workouts or weigh-ins.')}</div>
     <div style={{ height: 12 }} />
     <Button variant="tinted" icon="note" onClick={() => { close(); printWholePlan() }} disabled={!hasRoutines}>{t('Print / Save as PDF')}</Button>
     <div className="dim small" style={{ margin: '7px 2px 0', lineHeight: 1.4 }}>{t('A clean printout, one page per plan. No exercise ever gets split across pages.')}</div>

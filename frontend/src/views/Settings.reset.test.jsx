@@ -157,6 +157,9 @@ describe('Settings — footer', () => {
   it('links the source code to its home on GitHub, on About & updates', () => {
     act(() => root.render(<Settings page="about" />))
     const link = [...host.querySelectorAll('a')].find(a => a.textContent === 'Source code')
-    expect(link.getAttribute('href')).toBe('https://github.com/DuarteSantos8/openGym')
+    // This fork's own source (AGPL), with the project it is built on credited beside it.
+    expect(link.getAttribute('href')).toBe('https://github.com/bitcrashx/Gymbo')
+    const upstream = [...host.querySelectorAll('a')].find(a => a.textContent === 'openGym')
+    expect(upstream.getAttribute('href')).toBe('https://github.com/DuarteSantos8/openGym')
   })
 })
